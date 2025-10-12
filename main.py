@@ -1,3 +1,18 @@
+"""
+Simple Discord Bot - Öffentliche Version
+=======================================
+
+WICHTIGER HINWEIS FÜR ENTWICKLER:
+Wenn du diesen Bot als Basis für dein eigenes Projekt verwendest,
+bitte gib Credits an den ursprünglichen Entwickler!
+
+Entwickelt von: MSCgameplayer
+Original Repository: https://github.com/MSCgameplayer/Simple_discord_bot
+Mit Unterstützung von: GitHub Copilot
+
+Die Entwicklung war viel Arbeit - Attribution wird sehr geschätzt! 🙏
+"""
+
 import discord
 from discord.ext import commands, tasks
 import yt_dlp

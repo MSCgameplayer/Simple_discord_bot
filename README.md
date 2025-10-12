@@ -2,6 +2,17 @@
 
 Ein vielseitiger Discord Bot mit Musik-, Meme- und Unterhaltungsfunktionen.
 
+## ⚠️ **Wichtiger Hinweis für Entwickler**
+
+**Wenn du diesen Bot als Basis für dein eigenes Projekt verwendest, bitte ich um Attribution!**  
+Die Entwicklung dieses Bots war viel Arbeit - ein kleiner Credit bedeutet mir viel! 🙏
+
+**Einfach in deine README schreiben:**
+```
+Basiert auf Simple Discord Bot von MSCgameplayer
+https://github.com/MSCgameplayer/Simple_discord_bot
+```
+
 ## 🚀 Features
 
 ### ✅ Vollständig verfügbar (Öffentliche Version)
@@ -199,9 +210,27 @@ Um die erweiterten NSFW Features zu nutzen, füge folgende Konfiguration zu dein
 - **Entwickler:** MSCgameplayer
 - **KI-Assistent:** GitHub Copilot
 
-## 📜 Lizenz
+## 📜 Lizenz & Attribution
 
 Dieses Projekt steht unter der MIT Lizenz. Siehe LICENSE Datei für Details.
+
+### 🙏 **Wenn du diesen Bot als Basis verwendest:**
+**Bitte gib Credits an den ursprünglichen Entwickler!** Das bedeutet:
+
+1. **Verweise auf dieses Projekt** in deiner README oder Dokumentation
+2. **Erwähne MSCgameplayer** als ursprünglichen Entwickler  
+3. **Verlinke zurück** zu diesem Repository
+
+**Beispiel Attribution:**
+```markdown
+## Credits
+Basiert auf Simple Discord Bot von MSCgameplayer
+Original Projekt: https://github.com/MSCgameplayer/Simple_discord_bot
+```
+
+**Warum Credits wichtig sind:**
+Dieses Projekt stellt bedeutende Entwicklungsarbeit dar. Attribution unterstützt den 
+ursprünglichen Entwickler und hilft anderen, das Quellprojekt für Updates zu finden.
 
 ## 🙏 Credits
 

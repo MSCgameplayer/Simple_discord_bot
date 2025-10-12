@@ -22,5 +22,26 @@ SOFTWARE.
 
 ---
 
-Developed by MSCgameplayer with assistance from GitHub Copilot
-APIs used: Reddit, Nekos.life, Safebooru (public APIs only)
+## Attribution Requirements
+
+**If you use this Discord Bot as a base for your own project, please provide proper attribution:**
+
+1. **Include this project as a reference** in your README or documentation
+2. **Credit MSCgameplayer** as the original developer
+3. **Link back to this repository**: https://github.com/MSCgameplayer/Simple_discord_bot
+
+**Example Attribution:**
+```
+Based on Simple Discord Bot by MSCgameplayer
+Original Project: https://github.com/MSCgameplayer/Simple_discord_bot
+```
+
+**Why Attribution Matters:**
+This project represents significant development work and effort. Attribution helps support 
+the original developer and allows others to find the source project for updates and improvements.
+
+---
+
+**Developed by:** MSCgameplayer  
+**AI Assistance:** GitHub Copilot  
+**APIs used:** Reddit, Nekos.life, Safebooru (public APIs only)
