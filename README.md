@@ -242,3 +242,8 @@ ursprünglichen Entwickler und hilft anderen, das Quellprojekt für Updates zu f
 ---
 
 **⚠️ Hinweis:** Dies ist die öffentliche Version ohne API Keys. Für erweiterte Features sind eigene API-Schlüssel erforderlich.
+
+## 🌐 Sprachversionen
+
+- **🇩🇪 Deutsch:** [README.md](README.md) (Diese Datei)
+- **🇺🇸 English:** [README_EN.md](README_EN.md)
