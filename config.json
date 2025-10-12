@@ -1,0 +1,11 @@
+{
+    "bot_token": "DEIN_DISCORD_BOT_TOKEN_HIER",
+    "meme_settings": {
+        "auto_meme": false,
+        "meme_interval_minutes": 120,
+        "meme_chance": 0.15,
+        "max_memes_per_day": 3,
+        "daily_reset_hour": 6,
+        "allowed_channels": []
+    }
+}
