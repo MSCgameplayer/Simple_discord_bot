@@ -1,11 +1,79 @@
 {
-    "bot_token": "DEIN_DISCORD_BOT_TOKEN_HIER",
-    "meme_settings": {
-        "auto_meme": false,
-        "meme_interval_minutes": 120,
-        "meme_chance": 0.15,
-        "max_memes_per_day": 3,
-        "daily_reset_hour": 6,
-        "allowed_channels": []
-    }
+  "_comment": "Discord Music & Entertainment Bot - Public Configuration",
+  "_version": "2.1.0",
+  "_description": "Konfiguration für die öffentliche Version des Bots",
+  "_last_updated": "2024-01-15",
+  
+  "discord_token": "YOUR_DISCORD_BOT_TOKEN",
+  "_token_help": "Erhalte deinen Bot Token von: https://discord.com/developers/applications",
+  
+  "rule34_api": {
+    "enabled": false,
+    "_enabled_help": "Setze auf 'true' um NSFW-Features zu aktivieren",
+    "api_key": "YOUR_RULE34_API_KEY",
+    "user_id": "YOUR_RULE34_USER_ID",
+    "_api_help": "Registriere dich auf rule34.xxx für API-Zugang",
+    "_security_note": "NIEMALS diese Datei mit echten API-Keys committen!"
+  },
+  
+  "meme_settings": {
+    "auto_meme": false,
+    "_auto_meme_help": "Automatisches Meme-Posten aktivieren/deaktivieren",
+    "meme_interval_minutes": 60,
+    "_interval_help": "Intervall zwischen Auto-Memes in Minuten",
+    "max_memes_per_day": 10,
+    "_max_help": "Maximale Anzahl Auto-Memes pro Tag pro Server",
+    "meme_chance": 0.3,
+    "_chance_help": "Wahrscheinlichkeit (0.0-1.0) für Auto-Meme bei jedem Intervall",
+    "allowed_channels": [],
+    "_channels_help": "Leer = alle Channels, oder [123456789, 987654321] für spezifische Channel-IDs"
+  },
+  
+  "music_settings": {
+    "default_volume": 0.5,
+    "_volume_help": "Standard-Lautstärke (0.0-1.0)",
+    "max_queue_size": 50,
+    "_queue_help": "Maximale Anzahl Songs in Warteschlange",
+    "auto_disconnect_minutes": 30,
+    "_disconnect_help": "Auto-Disconnect nach X Minuten Inaktivität"
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "_level_help": "DEBUG, INFO, WARNING, ERROR",
+    "log_to_file": false,
+    "_file_help": "Zusätzlich in Datei loggen",
+    "log_file_path": "bot.log"
+  },
+  
+  "_setup_instructions": {
+    "1": "Bearbeite 'discord_token' mit deinem echten Bot-Token",
+    "2": "Optional: Konfiguriere Rule34 API für NSFW-Features",  
+    "3": "Optional: Aktiviere Auto-Meme System",
+    "4": "Starte Bot mit: python main_public.py",
+    "5": "Teste mit: !commands"
+  },
+  
+  "_feature_toggles": {
+    "music_enabled": true,
+    "memes_enabled": true, 
+    "nsfw_enabled": false,
+    "_note": "NSFW automatisch deaktiviert wenn Rule34 API nicht konfiguriert"
+  },
+  
+  "_version_info": {
+    "bot_version": "2.1.0 Public Release",
+    "updates": [
+      "Ultra-strikte Video-Filterung (nur Videos/GIFs)",
+      "Intelligente Tag-Kombination für bessere Treffer",
+      "Anti-Duplicate System (20 URL Blacklist)",
+      "Verbesserte Fehlerbehandlung und Logging",
+      "Fallback-Mechanismen für stabilere Suche"
+    ],
+    "requirements": [
+      "discord.py[voice]>=2.3.0",
+      "yt-dlp>=2023.7.6",
+      "aiohttp>=3.8.0"
+    ]
+  }
 }

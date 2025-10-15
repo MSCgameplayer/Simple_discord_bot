@@ -1,82 +1,131 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Simple Discord Bot - Öffentliche Version
-=======================================
+Discord Music & Entertainment Bot (Public Version)
+==================================================
+Ein vielseitiger Discord Bot mit Musik, Memes und NSFW Features
 
-WICHTIGER HINWEIS FÜR ENTWICKLER:
-Wenn du diesen Bot als Basis für dein eigenes Projekt verwendest,
-bitte gib Credits an den ursprünglichen Entwickler!
+Features:
+- 🎵 Musik-Player (YouTube, Spotify, etc.)
+- 🎬 NSFW Video/Bild Suche mit verbesserter Filterung
+- 😂 Auto-Meme System  
+- 🔧 Modulare Konfiguration
 
-Entwickelt von: MSCgameplayer
-Original Repository: https://github.com/MSCgameplayer/Simple_discord_bot
-Mit Unterstützung von: GitHub Copilot
+Author: MSCgameplayer
+Version: 2.1.0 (Public Release)
+License: MIT
 
-Die Entwicklung war viel Arbeit - Attribution wird sehr geschätzt! 🙏
+Installation:
+1. pip install discord.py[voice] yt-dlp aiohttp
+2. Konfiguriere config.json
+3. python main.py
+
+Updates in Version 2.1.0:
+- ✅ Ultra-strikte Video-Filterung (nur Videos/GIFs)
+- ✅ Intelligent Tag-Kombination System  
+- ✅ Verbessertes Anti-Duplicate System
+- ✅ Fallback-Mechanismen für bessere Stabilität
+- ✅ Detaillierte Logging und Fehlerbehandlung
 """
 
+import os
+import sys
+import json
+import random
+import asyncio
+import logging
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 import yt_dlp
-import asyncio
-import os
-import json
-import aiohttp
-import random
-import logging
-from collections import defaultdict
-from typing import Any, Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, timedelta
+import xml.etree.ElementTree as ET
 
-# Logging konfigurieren
+# ========================================================================================
+# LOGGING SETUP
+# ========================================================================================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger('MusicBot')
 
-# Intents konfigurieren - ALLE Intents aktivieren
-intents = discord.Intents.all()
+# ========================================================================================
+# DISCORD BOT SETUP
+# ========================================================================================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.voice_states = True
+intents.guilds = True
 
-# Bot erstellen
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Opus Library laden
-if not discord.opus.is_loaded():
-    # Versuche verschiedene Opus Pfade
+# ========================================================================================
+# CONFIGURATION LOADER
+# ========================================================================================
+def load_config():
+    """Lädt die Bot-Konfiguration aus config.json"""
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        # Validierung der wichtigsten Einstellungen
+        if not config.get('discord_token') or config['discord_token'] == "YOUR_DISCORD_BOT_TOKEN":
+            logger.error("❌ Discord Token nicht konfiguriert! Bitte config.json bearbeiten.")
+            sys.exit(1)
+            
+        logger.info("✅ Konfiguration erfolgreich geladen")
+        return config
+    except FileNotFoundError:
+        logger.error("❌ config.json nicht gefunden!")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Fehler beim Lesen der config.json: {e}")
+        sys.exit(1)
+
+# Globale Konfiguration laden
+CONFIG = load_config()
+
+# ========================================================================================
+# AUDIO SETUP
+# ========================================================================================
+def setup_opus():
+    """Lädt die Opus-Bibliothek für Audio-Support"""
     opus_paths = [
-        '/opt/homebrew/lib/libopus.dylib',  # M1 Mac
-        '/usr/local/lib/libopus.dylib',     # Intel Mac  
-        '/usr/lib/x86_64-linux-gnu/libopus.so.0',  # Linux
-        'libopus.so.0',
-        'libopus.so',
-        'opus'
+        '/opt/homebrew/lib/libopus.dylib',  # macOS Homebrew
+        '/usr/lib/x86_64-linux-gnu/libopus.so.0',  # Ubuntu/Debian
+        '/usr/lib64/libopus.so.0',  # CentOS/RHEL
+        'libopus.dll'  # Windows
     ]
     
     for path in opus_paths:
-        try:
-            discord.opus.load_opus(path)
-            logger.info(f"✅ Opus erfolgreich geladen von: {path}")
-            break
-        except:
-            logger.info(f"❌ Opus konnte nicht geladen werden von: {path}")
-            continue
+        if os.path.exists(path):
+            try:
+                discord.opus.load_opus(path)
+                if discord.opus.is_loaded():
+                    logger.info(f"✅ Opus erfolgreich geladen von: {path}")
+                    return True
+            except Exception as e:
+                logger.warning(f"⚠️ Opus-Ladung fehlgeschlagen ({path}): {e}")
+                continue
     
-    if not discord.opus.is_loaded():
-        logger.error("❌ Konnte Opus nicht laden! Voice wird nicht funktionieren.")
-    else:
-        logger.info("🎵 Opus erfolgreich geladen - Audio bereit!")
+    logger.warning("⚠️ Opus konnte nicht geladen werden - Audio möglicherweise nicht verfügbar")
+    return False
 
-# Globale Variablen
-music_queues = defaultdict(list)
-voice_clients = {}
-meme_config = {}
-daily_meme_count = 0
-last_reset_date = None
+# Opus beim Start laden
+setup_opus()
+if discord.opus.is_loaded():
+    logger.info("🎵 Opus erfolgreich geladen - Audio bereit!")
+else:
+    logger.warning("⚠️ Opus nicht verfügbar - Musik-Features eingeschränkt")
 
-# yt-dlp Optionen - Optimiert für Discord Streaming
+# ========================================================================================
+# YT-DLP CONFIGURATION
+# ========================================================================================
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -88,975 +137,729 @@ ytdl_format_options = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    'cookiefile': None,
+    'age_limit': None,
 }
 
 ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin',
-    'options': '-vn -bufsize 512k'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn',
 }
 
-# yt-dlp instance für Audio-Extraktion
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)  # type: ignore
-
-class MemeAPI:
-    @staticmethod
-    async def get_random_meme():
-        apis = [
-            MemeAPI.get_reddit_meme,
-            MemeAPI.get_meme_api,
-            MemeAPI.get_imgflip_meme
-        ]
-        for api_func in random.sample(apis, len(apis)):
-            try:
-                meme = await api_func()
-                if meme:
-                    return meme
-            except Exception as e:
-                print(f"Meme API Fehler: {e}")
-                continue
+def get_ytdl():
+    """Erstellt YT-DLP Instanz bei Bedarf"""
+    try:
+        return yt_dlp.YoutubeDL(ytdl_format_options)  # type: ignore
+    except Exception as e:
+        logger.error(f"YT-DLP Initialisierung fehlgeschlagen: {e}")
         return None
 
-    @staticmethod
-    async def get_reddit_meme():
-        subreddits = ['memes', 'dankmemes', 'wholesomememes', 'me_irl', 'programmerhumor']
-        subreddit = random.choice(subreddits)
-        async with aiohttp.ClientSession() as session:
-            url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=50"
-            headers = {'User-Agent': 'DiscordBot/1.0'}
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    posts = data['data']['children']
-                    image_posts = [post for post in posts if post['data'].get('url', '').endswith(('.jpg', '.png', '.gif', '.jpeg'))]
-                    if image_posts:
-                        post = random.choice(image_posts)['data']
-                        return {
-                            'title': post['title'][:100],
-                            'url': post['url'],
-                            'source': f"r/{subreddit}"
-                        }
-        return None
+# ========================================================================================
+# GLOBAL VARIABLES
+# ========================================================================================
+# Musik-System
+voice_clients = {}
+music_queues = {}
 
-    @staticmethod
-    async def get_meme_api():
-        async with aiohttp.ClientSession() as session:
-            async with session.get('https://meme-api.herokuapp.com/gimme') as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {
-                        'title': data.get('title', 'Random Meme')[:100],
-                        'url': data.get('url'),
-                        'source': data.get('subreddit', 'meme-api')
-                    }
-        return None
+# NSFW Anti-Duplicate System (verbessertes Set-basiertes System)
+sent_video_urls = set()
 
-    @staticmethod
-    async def get_imgflip_meme():
-        meme_templates = [
-            'https://i.imgflip.com/1bij.jpg',
-            'https://i.imgflip.com/4t0m5.jpg',
-            'https://i.imgflip.com/26am.jpg',
-            'https://i.imgflip.com/1otk96.jpg',
-            'https://i.imgflip.com/23ls.jpg'
-        ]
-        return {
-            'title': 'Classic Meme Template',
-            'url': random.choice(meme_templates),
-            'source': 'imgflip'
-        }
+# Meme-System
+meme_counters = {}
+last_meme_reset = {}
 
-class NSFWContentAPI:
-    @staticmethod
-    async def get_random_nsfw():
-        """Holt NSFW Content von verschiedenen APIs"""
-        apis = [
-            NSFWContentAPI.get_reddit_nsfw,
-            NSFWContentAPI.get_nekos_api
-        ]
-        
-        for api in apis:
-            try:
-                return await api()
-            except Exception as e:
-                logger.error(f"NSFW API Fehler: {e}")
-                continue
-        
-        return None
+# ========================================================================================
+# UTILITY FUNCTIONS
+# ========================================================================================
+def reset_daily_counters():
+    """Setzt tägliche Zähler zurück"""
+    global last_meme_reset
+    today = datetime.now().strftime('%Y-%m-%d')
     
-    @staticmethod
-    async def get_reddit_nsfw():
-        """Holt NSFW Content von Reddit"""
-        subreddits = [
-            'nsfw', 'gonewild', 'RealGirls', 'Amateur', 
-            'collegesluts', 'Nude_Selfie', 'adorableporn'
-        ]
-        
-        subreddit = random.choice(subreddits)
-        url = f'https://www.reddit.com/r/{subreddit}/hot/.json?limit=50'
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={'User-agent': 'Discord Bot NSFW'}) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    posts = data['data']['children']
-                    
-                    # Filtere nur Bild-Posts
-                    image_posts = [post for post in posts if 
-                                  post['data']['url'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')) and
-                                  not post['data']['is_video'] and
-                                  post['data']['over_18']]
-                    
-                    if image_posts:
-                        post = random.choice(image_posts)['data']
-                        return {
-                            'title': post['title'][:100] + '...' if len(post['title']) > 100 else post['title'],
-                            'url': post['url'],
-                            'subreddit': f"r/{subreddit}",
-                            'upvotes': post['ups'],
-                            'nsfw': True
-                        }
-        return None
-    
-    @staticmethod 
-    async def get_nekos_api():
-        """Holt NSFW Content von Nekos API"""
-        try:
-            endpoints = ['boobs', 'pussy', 'ass', 'hentai', 'lewd']
-            endpoint = random.choice(endpoints)
-            url = f'https://nekos.life/api/v2/img/{endpoint}'
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {
-                            'title': f'Random {endpoint.title()}',
-                            'url': data['url'],
-                            'subreddit': 'nekos.life',
-                            'nsfw': True
-                        }
-        except Exception as e:
-            logger.error(f"Nekos API Fehler: {e}")
-            return None
+    for guild_id in list(meme_counters.keys()):
+        if last_meme_reset.get(guild_id) != today:
+            meme_counters[guild_id] = 0
+            last_meme_reset[guild_id] = today
+            logger.info(f"🔄 Täglicher Meme-Counter zurückgesetzt (Tag: {today})")
 
-class AnimeCharacterAPI:
-    @staticmethod
-    async def search_character(character_name, nsfw=False, category=None):
-        """Sucht nach Charakteren über verschiedene APIs - ÖFFENTLICHE VERSION OHNE API KEYS"""
-        try:
-            # Nur öffentliche APIs verwenden ohne Authentifizierung
-            reddit_result = await AnimeCharacterAPI.search_reddit_character(character_name, nsfw, category)
-            if reddit_result:
-                return reddit_result
-                
-            # Backup: Safebooru für SFW Content
-            if not nsfw:
-                safebooru_result = await AnimeCharacterAPI.search_safebooru(character_name)
-                if safebooru_result:
-                    return safebooru_result
-            
-            # Nekos API als letzter Ausweg
-            nekos_result = await AnimeCharacterAPI.search_nekos_character(character_name)
-            return nekos_result
-            
-        except Exception as e:
-            logger.error(f"Character API Fehler: {e}")
-            return None
-    
-    @staticmethod
-    async def search_reddit_character(character_name, nsfw=False, category=None):
-        """Sucht Charakter auf Reddit mit Kategorie-Support"""
-        try:
-            # Kategorie-spezifische Subreddits (nur Anime erlaubt)
-            category_subreddits = {
-                'anime': [
-                    'hentai', 'rule34', 'AnimePorn', 'HENTAI_GIF', 'HentaiParadise' if nsfw else 'anime', 'animeart', 'animegifs'
-                ]
-            }
-            
-            # Subreddit Auswahl basierend auf Kategorie
-            if category and category.lower() in category_subreddits:
-                subreddits = category_subreddits[category.lower()]
-            elif nsfw:
-                subreddits = ['hentai', 'rule34', 'AnimePorn', 'HENTAI_GIF', 'HentaiParadise']
-            else:
-                subreddits = ['anime', 'animeart', 'animegifs', 'wholesomeanimemes', 'animememes']
-            
-            for subreddit in subreddits:
-                url = f'https://www.reddit.com/r/{subreddit}/search.json?q={character_name}&limit=50&sort=hot'
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers={'User-agent': 'Discord Anime Bot'}) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            posts = data['data']['children']
-                            
-                            # Filtere nach Bild-Posts
-                            image_posts = [post for post in posts if 
-                                          post['data']['url'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')) and
-                                          not post['data']['is_video']]
-                            
-                            if image_posts:
-                                post = random.choice(image_posts)['data']
-                                return {
-                                    'title': post['title'][:100] + '...' if len(post['title']) > 100 else post['title'],
-                                    'url': post['url'],
-                                    'subreddit': f"r/{subreddit}",
-                                    'upvotes': post['ups'],
-                                    'character': character_name,
-                                    'nsfw': post.get('over_18', nsfw)
-                                }
-        except Exception as e:
-            logger.error(f"Reddit Character Search Fehler: {e}")
-        return None
-    
-    @staticmethod
-    async def search_safebooru(character_name):
-        """Sucht auf Safebooru (SFW) nach Charakteren - ÖFFENTLICHE VERSION"""
-        try:
-            # Safebooru API - SFW only
-            url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=50&tags={character_name.replace(' ', '_')}"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers={'User-agent': 'Discord Anime Bot'}) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if isinstance(data, list) and data:
-                            post = random.choice(data)
-                            return {
-                                'title': f'{character_name} - Safebooru',
-                                'url': post.get('file_url', f"https://safebooru.org/images/{post.get('directory', '')}/{post.get('image', '')}"),
-                                'subreddit': 'Safebooru',
-                                'character': character_name,
-                                'tags': post.get('tags', '').split()[:5],
-                                'nsfw': False
-                            }
-        except Exception as e:
-            logger.error(f"Safebooru Search Fehler: {e}")
-        return None
-    
-    @staticmethod
-    async def search_by_tags(tags):
-        """Sucht nach spezifischen Tags - ÖFFENTLICHE VERSION (nur Safebooru)"""
-        try:
-            # Bereite Tags für API vor
-            tag_string = tags.replace(' ', '+').replace(',', '+').lower()
-            logger.info(f"🔍 Suche Tags (Public): {tag_string}")
-            
-            # Gesperrte Tags prüfen
-            blocked_tags = [
-                'furry', 'anthro', 'anthropomorphic', 'fur', 'animal_ears', 'animal_humanoid',
-                'brony', 'mlp', 'my_little_pony', 'pony', 'equine', 'horse',
-                'bestiality', 'zoophilia', 'feral', 'quadruped'
-            ]
-            
-            # Prüfe ob gesperrte Tags in der Suche enthalten sind
-            search_words = tag_string.replace('+', ' ').split()
-            for word in search_words:
-                if word in blocked_tags:
-                    logger.warning(f"🚫 Gesperrter Tag erkannt: {word}")
-                    return {
-                        'blocked': True,
-                        'blocked_tag': word,
-                        'message': f"Der Tag '{word}' ist auf diesem Server nicht erlaubt."
-                    }
-            
-            # Verwende nur Safebooru in der öffentlichen Version
-            logger.info("🔄 Verwende Safebooru (Public Version)...")
-            safebooru_url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=50&tags={tag_string}"
-            
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                try:
-                    async with session.get(safebooru_url, headers={'User-agent': 'Discord Bot'}) as resp:
-                        logger.info(f"🌐 Safebooru API Response Status: {resp.status}")
-                        if resp.status == 200:
-                            data = await resp.json()
-                            logger.info(f"📊 Safebooru API Data: {len(data) if isinstance(data, list) else 'nicht Liste'} Einträge")
-                            if isinstance(data, list) and data:
-                                post = random.choice(data)
-                                return {
-                                    'title': f'Tags: {tags}',
-                                    'url': post.get('file_url', f"https://safebooru.org/images/{post.get('directory', '')}/{post.get('image', '')}"),
-                                    'subreddit': 'Safebooru (Public)',
-                                    'upvotes': post.get('score', 0),
-                                    'tags': post.get('tags', '').split()[:5] if post.get('tags') else []
-                                }
-                except Exception as safebooru_error:
-                    logger.error(f"Safebooru API Fehler: {safebooru_error}")
-            
-            logger.info("❌ Public API fehlgeschlagen")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Tag Search Hauptfehler: {e}")
-            return None
-    
-    @staticmethod
-    async def search_nekos_character(character_name):
-        """Sucht SFW Anime Content"""
-        try:
-            # Nekos.life SFW endpoints
-            endpoints = ['neko', 'waifu', 'pat', 'hug', 'kiss', 'slap', 'cuddle']
-            endpoint = random.choice(endpoints)
-            url = f'https://nekos.life/api/v2/img/{endpoint}'
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return {
-                            'title': f'{character_name} - {endpoint.title()} Style',
-                            'url': data['url'],
-                            'subreddit': 'nekos.life',
-                            'character': character_name,
-                            'nsfw': False
-                        }
-        except Exception as e:
-            logger.error(f"Nekos Character Search Fehler: {e}")
-        return None
+async def is_nsfw_channel(ctx):
+    """Überprüft ob Channel NSFW ist"""
+    return hasattr(ctx.channel, 'is_nsfw') and ctx.channel.is_nsfw()
 
+# ========================================================================================
+# DISCORD BOT EVENTS
+# ========================================================================================
+@bot.event
+async def on_ready():
+    """Bot ist bereit und verbunden"""
+    logger.info(f"{bot.user.name}#{bot.user.discriminator} ist online!")
+    logger.info(f"Bot ID: {bot.user.id}")
+    
+    # Starte Auto-Systeme
+    if CONFIG['meme_settings']['auto_meme']:
+        auto_meme_poster.start()
+        logger.info(f"🤣 Auto-Meme Poster gestartet (alle {CONFIG['meme_settings']['meme_interval_minutes']} min, max {CONFIG['meme_settings']['max_memes_per_day']} pro Tag)")
+    
+    logger.info("🎵 Musik & Meme Bot bereit!")
+    print("------")
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Globale Fehlerbehandlung"""
+    if isinstance(error, commands.CommandNotFound):
+        return  # Ignoriere unbekannte Befehle
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ **Fehlender Parameter:** {error.param.name}")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❌ **Ungültiger Parameter!** Überprüfe deine Eingabe.")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏰ **Cooldown:** Warte noch {error.retry_after:.1f} Sekunden.")
+    else:
+        logger.error(f"Unerwarteter Fehler: {error}")
+        await ctx.send("❌ **Ein unerwarteter Fehler ist aufgetreten!**")
+
+# ========================================================================================
+# MUSIC COMMANDS
+# ========================================================================================
 class YTDLSource(discord.PCMVolumeTransformer):
+    """YouTube Audio Source für Discord"""
+    
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
         self.data = data
         self.title = data.get('title')
         self.url = data.get('url')
+        self.duration = data.get('duration')
+        self.thumbnail = data.get('thumbnail')
 
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
+        """Erstellt Audio-Source von URL"""
         loop = loop or asyncio.get_event_loop()
-        logger.info(f"🎵 Versuche Audio zu laden von: {url}")
-        logger.info(f"Stream-Modus: {stream}")
-        
         try:
-            # yt-dlp Extraktion
-            logger.info("📥 Starte yt-dlp Extraktion...")
+            ytdl = get_ytdl()
+            if not ytdl:
+                raise Exception("YT-DLP konnte nicht initialisiert werden")
+                
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-            logger.info(f"✅ yt-dlp Extraktion erfolgreich: {data.get('title', 'Unbekannter Titel')}")
             
             if 'entries' in data:
-                logger.info(f"📋 Playlist erkannt, nehme ersten Eintrag: {len(data['entries'])} Einträge")
                 data = data['entries'][0]
-                logger.info(f"🎶 Gewählter Song: {data.get('title', 'Unbekannt')}")
             
-            # Audio-URL bestimmen
-            filename = data.get('url') if stream else ytdl.prepare_filename(data)
-            logger.info(f"🔗 Audio-Quelle: {filename}")
-            
-            if filename is None:
-                logger.error("❌ Keine gültige Audio-URL gefunden!")
-                raise Exception("Konnte keine gültige Audio-URL extrahieren")
-            
-            # FFmpeg-Parameter loggen
-            logger.info(f"🎛️ FFmpeg before_options: {ffmpeg_options['before_options']}")
-            logger.info(f"🎛️ FFmpeg options: {ffmpeg_options['options']}")
-            
-            # Audio Source erstellen
-            logger.info("🔊 Erstelle FFmpeg Audio Source...")
-            audio_source = discord.FFmpegPCMAudio(
-                filename, 
-                before_options=ffmpeg_options['before_options'], 
-                options=ffmpeg_options['options']
-            )
-            logger.info("✅ Audio Source erfolgreich erstellt!")
-            
-            return cls(audio_source, data=data)
-            
+            filename = data.get('url', '') if stream else ytdl.prepare_filename(data)
+            return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
         except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der Audio-URL: {str(e)}")
-            logger.error(f"🔍 URL war: {url}")
-            raise Exception(f"Fehler beim Laden der Audio-URL: {str(e)}")
-
-def load_config():
-    try:
-        with open('config.json', 'r') as f:
-            return json.load(f)
-    except Exception:
-        logger.warning("⚠️ config.json nicht gefunden - erstelle eine mit deinem Bot Token!")
-        return None
-
-def save_config(config):
-    try:
-        with open('config.json', 'w') as f:
-            json.dump(config, f, indent=4)
-        return True
-    except Exception:
-        return False
-
-# =================== BERECHTIGUNGSSYSTEM ===================
-
-def has_moderator_permissions(member):
-    """Prüft ob ein Member Moderator-Berechtigung oder höher hat"""
-    return (
-        member.guild_permissions.administrator or
-        member.guild_permissions.manage_guild or 
-        member.guild_permissions.manage_channels or
-        member.guild_permissions.manage_messages or
-        member.guild_permissions.kick_members or
-        member.guild_permissions.ban_members or
-        member.guild_permissions.moderate_members
-    )
-
-def moderator_required():
-    """Decorator für Befehle die Moderator-Rechte erfordern"""
-    async def predicate(ctx):
-        if not has_moderator_permissions(ctx.author):
-            embed = discord.Embed(
-                title="🚫 Keine Berechtigung",
-                description="Dieser Befehl erfordert **Moderator-Berechtigung** oder höher!",
-                color=0xff0000
-            )
-            embed.add_field(
-                name="📋 Benötigte Berechtigungen (eine davon):",
-                value="• Administrator\n"
-                      "• Server verwalten\n"
-                      "• Kanäle verwalten\n"
-                      "• Nachrichten verwalten\n"
-                      "• Mitglieder kicken\n"
-                      "• Mitglieder bannen\n"
-                      "• Mitglieder moderieren",
-                inline=False
-            )
-            embed.set_footer(text="💡 Wende dich an einen Administrator für Hilfe")
-            await ctx.send(embed=embed)
-            return False
-        return True
-    return commands.check(predicate)
-
-@tasks.loop(minutes=120)
-async def auto_meme_poster():
-    global daily_meme_count, last_reset_date
-    if not meme_config.get('auto_meme', False):
-        return
-    
-    from datetime import datetime, date
-    today = date.today()
-    reset_hour = meme_config.get('daily_reset_hour', 6)
-    
-    if last_reset_date != today:
-        if datetime.now().hour >= reset_hour:
-            daily_meme_count = 0
-            last_reset_date = today
-            print(f"🔄 Täglicher Meme-Counter zurückgesetzt (Tag: {today})")
-    
-    max_memes = meme_config.get('max_memes_per_day', 3)
-    if daily_meme_count >= max_memes:
-        print(f"📊 Tägliches Meme-Limit erreicht ({daily_meme_count}/{max_memes})")
-        return
-    
-    if random.random() > meme_config.get('meme_chance', 0.15):
-        return
-    
-    available_channels = []
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            if channel.permissions_for(guild.me).send_messages:
-                if not meme_config.get('allowed_channels') or channel.id in meme_config.get('allowed_channels', []):
-                    available_channels.append(channel)
-    
-    if not available_channels:
-        return
-    
-    target_channel = random.choice(available_channels)
-    
-    try:
-        meme = await MemeAPI.get_random_meme()
-        if meme:
-            embed = discord.Embed(
-                title="🤣 Random Meme Time!",
-                description=meme['title'],
-                color=0xff6b9d
-            )
-            embed.set_image(url=meme['url'])
-            embed.set_footer(text=f"Quelle: {meme['source']} | Auto-Meme 🤖")
-            await target_channel.send(embed=embed)
-            daily_meme_count += 1
-            print(f"🤣 Auto-Meme #{daily_meme_count}/{meme_config.get('max_memes_per_day', 3)} gepostet")
-    except Exception as e:
-        print(f"❌ Fehler beim Auto-Meme posting: {e}")
-
-@auto_meme_poster.before_loop
-async def before_auto_meme():
-    await bot.wait_until_ready()
-
-@bot.event
-async def on_ready():
-    global meme_config
-    print(f'{bot.user} ist online!')
-    if bot.user:
-        print(f'Bot ID: {bot.user.id}')
-    
-    config = load_config()
-    if config:
-        meme_config = config.get('meme_settings', {})
-        if meme_config.get('auto_meme', False):
-            interval = meme_config.get('meme_interval_minutes', 120)
-            max_daily = meme_config.get('max_memes_per_day', 3)
-            auto_meme_poster.change_interval(minutes=interval)
-            auto_meme_poster.start()
-            print(f"🤣 Auto-Meme Poster gestartet (alle {interval} min, max {max_daily} pro Tag)")
-    
-    print('🎵 Musik & Meme Bot bereit!')
-    print('------')
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        await ctx.send("❌ Dieser Command existiert nicht!")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("❌ Es fehlen Parameter für diesen Command!")
-    else:
-        print(f'Fehler: {error}')
-        await ctx.send("❌ Ein Fehler ist aufgetreten!")
-
-def get_voice_client(ctx):
-    return voice_clients.get(ctx.guild.id)
+            logger.error(f"YT-DL Fehler: {e}")
+            raise e
 
 @bot.command(name='join', aliases=['j'])
-async def join(ctx):
-    logger.info(f"🔗 Join-Befehl von {ctx.author.name}")
-    
+async def join_voice(ctx):
+    """Bot tritt Voice-Channel bei"""
     if not ctx.author.voice:
-        logger.warning(f"❌ User nicht in Voice Channel")
-        await ctx.send("❌ Du musst in einem Voice Channel sein!")
-        return
-        
-    channel = ctx.author.voice.channel
-    logger.info(f"🎯 Versuche Voice Channel beizutreten: {channel.name}")
+        return await ctx.send("❌ **Du musst in einem Voice-Channel sein!**")
     
-    try:
-        if ctx.guild.id in voice_clients:
-            logger.info(f"🔄 Voice Client existiert, bewege zu neuem Channel...")
-            await voice_clients[ctx.guild.id].move_to(channel)
-        else:
-            logger.info(f"🆕 Erstelle neue Voice Connection...")
-            voice_client = await channel.connect(timeout=10.0, reconnect=True)
-            voice_clients[ctx.guild.id] = voice_client
-            logger.info(f"✅ Voice Client erfolgreich erstellt")
-            
-        await ctx.send(f"✅ Dem Channel **{channel.name}** beigetreten!")
-        logger.info(f"✅ Erfolgreich Channel {channel.name} beigetreten")
-        
-    except Exception as e:
-        logger.error(f"❌ Fehler beim Voice Channel beitreten: {str(e)}")
-        await ctx.send(f"❌ Fehler beim Beitreten: {str(e)}")
-        raise e
+    channel = ctx.author.voice.channel
+    
+    if ctx.voice_client is not None:
+        await ctx.voice_client.move_to(channel)
+    else:
+        await channel.connect()
+    
+    await ctx.send(f"🎵 **Verbunden mit:** {channel.name}")
 
 @bot.command(name='leave', aliases=['disconnect', 'dc'])
-async def leave(ctx):
-    voice_client = get_voice_client(ctx)
-    if voice_client:
-        music_queues[ctx.guild.id].clear()
-        await voice_client.disconnect()
-        del voice_clients[ctx.guild.id]
-        await ctx.send("✅ Voice Channel verlassen!")
+async def leave_voice(ctx):
+    """Bot verlässt Voice-Channel"""
+    if ctx.voice_client:
+        guild_id = ctx.guild.id
+        if guild_id in music_queues:
+            music_queues[guild_id].clear()
+        await ctx.voice_client.disconnect()
+        await ctx.send("👋 **Voice-Channel verlassen!**")
     else:
-        await ctx.send("❌ Bot ist nicht in einem Voice Channel!")
+        await ctx.send("❌ **Bot ist nicht in einem Voice-Channel!**")
 
 @bot.command(name='play', aliases=['p'])
-async def play(ctx, *, query):
-    logger.info(f"🎵 Play-Befehl von {ctx.author.name}: {query}")
-    
+async def play_music(ctx, *, search):
+    """Spielt Musik von YouTube/URL"""
     if not ctx.author.voice:
-        logger.warning(f"❌ User {ctx.author.name} ist nicht in einem Voice Channel")
-        await ctx.send("❌ Du musst in einem Voice Channel sein!")
-        return
+        return await ctx.send("❌ **Du musst in einem Voice-Channel sein!**")
     
-    if ctx.guild.id not in voice_clients:
-        logger.info(f"🔗 Bot nicht verbunden, versuche beizutreten...")
-        await join(ctx)
+    if not ctx.voice_client:
+        await ctx.author.voice.channel.connect()
     
-    voice_client = get_voice_client(ctx)
-    if not voice_client:
-        logger.error(f"❌ Konnte Voice Client nicht erhalten")
-        await ctx.send("❌ Konnte nicht dem Voice Channel beitreten!")
-        return
+    guild_id = ctx.guild.id
+    if guild_id not in music_queues:
+        music_queues[guild_id] = []
+    
+    # Status-Nachricht
+    msg = await ctx.send(f"🔍 **Suche nach:** `{search}`...")
     
     try:
-        await ctx.send(f"🔍 Suche nach: **{query}**")
-        logger.info(f"🔍 Verarbeite Query: {query}")
+        # Audio-Source erstellen
+        source = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
         
-        if not query.startswith('http'):
-            query = f"ytsearch:{query}"
-            logger.info(f"🔄 Query umgewandelt zu: {query}")
+        # Zur Warteschlange hinzufügen
+        music_queues[guild_id].append(source)
         
-        logger.info(f"📥 Starte YTDLSource.from_url...")
-        player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
-        logger.info(f"✅ Player erstellt: {player.title}")
-        
-        music_queues[ctx.guild.id].append(player)
-        logger.info(f"📋 Player zur Queue hinzugefügt. Queue-Länge: {len(music_queues[ctx.guild.id])}")
-        
-        if voice_client.is_playing():
-            logger.info(f"🎶 Bot spielt bereits, Song zur Queue hinzugefügt")
-            await ctx.send(f"📋 **{player.title}** zur Queue hinzugefügt!")
-        else:
-            logger.info(f"▶️ Bot spielt nicht, starte Wiedergabe...")
+        # Abspielen wenn nicht bereits aktiv
+        if not ctx.voice_client.is_playing():
             await play_next(ctx)
+        else:
+            embed = discord.Embed(
+                title="➕ Zur Warteschlange hinzugefügt",
+                description=f"**{source.title}**",
+                color=0x00ff00
+            )
+            if source.thumbnail:
+                embed.set_thumbnail(url=source.thumbnail)
+            embed.add_field(name="Position", value=len(music_queues[guild_id]), inline=True)
+            await msg.edit(content="", embed=embed)
             
     except Exception as e:
-        error_msg = str(e) if str(e) else "Unbekannter Fehler beim Laden der Musik"
-        logger.error(f"❌ Fehler im Play-Befehl: {error_msg}")
-        logger.error(f"🔍 Exception Type: {type(e).__name__}")
-        logger.error(f"🔍 Original Query war: {query}")
-        await ctx.send(f"❌ Fehler beim Laden der Musik: {error_msg}")
+        logger.error(f"Play-Fehler: {e}")
+        await msg.edit(content=f"❌ **Fehler beim Laden:** {str(e)[:100]}...")
 
 async def play_next(ctx):
-    voice_client = get_voice_client(ctx)
+    """Spielt nächsten Song in Warteschlange"""
     guild_id = ctx.guild.id
     
-    logger.info(f"🎵 play_next aufgerufen für Guild {guild_id}")
-    
-    if not voice_client:
-        logger.error(f"❌ Kein Voice Client gefunden")
-        return
-        
-    if len(music_queues[guild_id]) == 0:
-        logger.info(f"📋 Queue ist leer")
+    if guild_id not in music_queues or not music_queues[guild_id]:
         return
     
-    player = music_queues[guild_id].pop(0)
-    logger.info(f"▶️ Starte Wiedergabe: {player.title}")
+    source = music_queues[guild_id].pop(0)
     
     def after_playing(error):
         if error:
-            logger.error(f'❌ Wiedergabe-Fehler: {error}')
-        else:
-            logger.info(f'✅ Wiedergabe beendet: {player.title}')
-        if guild_id in music_queues and len(music_queues[guild_id]) > 0:
-            logger.info(f"🔄 Nächster Song in Queue, starte automatisch...")
-            coro = play_next(ctx)
-            fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
-            try:
-                fut.result()
-            except Exception as e:
-                logger.error(f'❌ Fehler beim Auto-Play: {e}')
-    
-    try:
-        # Prüfe Voice Client Status vor Wiedergabe
-        if not voice_client.is_connected():
-            logger.warning(f"⚠️ Voice Client nicht verbunden, versuche Reconnect...")
-            await asyncio.sleep(1)  # Warte kurz
-            if not voice_client.is_connected():
-                logger.error(f"❌ Voice Client immer noch nicht verbunden")
-                await ctx.send(f"❌ Voice Connection verloren. Verwende `!join` erneut.")
-                return
+            logger.error(f"Player Fehler: {error}")
         
-        logger.info(f"🔊 Starte voice_client.play() für: {player.title}")
-        logger.info(f"🔍 Voice Client Status - Connected: {voice_client.is_connected()}, Playing: {voice_client.is_playing()}")
-        
-        voice_client.play(player, after=after_playing)
-        await ctx.send(f"🎵 Spielt jetzt: **{player.title}**")
-        logger.info(f"✅ Wiedergabe erfolgreich gestartet!")
-        
-    except Exception as e:
-        error_msg = str(e) if str(e) else "Unbekannter Wiedergabefehler"
-        logger.error(f"❌ Fehler beim Starten der Wiedergabe: {error_msg}")
-        logger.error(f"🔍 Exception Type: {type(e).__name__}")
-        await ctx.send(f"❌ Fehler beim Abspielen: {error_msg}")
-        raise e
-
-@bot.command(name='queue', aliases=['q'])
-async def queue(ctx):
-    guild_queue = music_queues[ctx.guild.id]
-    if len(guild_queue) == 0:
-        await ctx.send("📋 Die Queue ist leer!")
-        return
+        # Nächsten Song asynchron abspielen
+        coro = play_next(ctx)
+        fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
+        try:
+            fut.result()
+        except Exception as e:
+            logger.error(f"Fehler beim Abspielen des nächsten Songs: {e}")
     
-    queue_text = "📋 **Aktuelle Queue:**\n"
-    for i, player in enumerate(guild_queue[:10], 1):
-        queue_text += f"{i}. {player.title}\n"
+    ctx.voice_client.play(source, after=after_playing)
     
-    if len(guild_queue) > 10:
-        queue_text += f"\n... und {len(guild_queue) - 10} weitere Songs"
+    # Now Playing Embed
+    embed = discord.Embed(
+        title="🎵 Wird abgespielt",
+        description=f"**{source.title}**",
+        color=0x1DB954
+    )
+    if source.thumbnail:
+        embed.set_thumbnail(url=source.thumbnail)
     
-    await ctx.send(queue_text)
+    if source.duration:
+        duration_str = f"{source.duration // 60}:{source.duration % 60:02d}"
+        embed.add_field(name="Dauer", value=duration_str, inline=True)
+    
+    embed.add_field(name="Warteschlange", value=len(music_queues[guild_id]), inline=True)
+    
+    await ctx.send(embed=embed)
 
 @bot.command(name='pause')
-async def pause(ctx):
-    voice_client = get_voice_client(ctx)
-    if voice_client and voice_client.is_playing():
-        voice_client.pause()
-        await ctx.send("⏸️ Musik pausiert!")
+async def pause_music(ctx):
+    """Pausiert aktuelle Musik"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.pause()
+        await ctx.send("⏸️ **Musik pausiert**")
     else:
-        await ctx.send("❌ Es läuft gerade keine Musik!")
+        await ctx.send("❌ **Keine Musik läuft!**")
 
 @bot.command(name='resume', aliases=['unpause'])
-async def resume(ctx):
-    voice_client = get_voice_client(ctx)
-    if voice_client and voice_client.is_paused():
-        voice_client.resume()
-        await ctx.send("▶️ Musik fortgesetzt!")
+async def resume_music(ctx):
+    """Setzt pausierte Musik fort"""
+    if ctx.voice_client and ctx.voice_client.is_paused():
+        ctx.voice_client.resume()
+        await ctx.send("▶️ **Musik fortgesetzt**")
     else:
-        await ctx.send("❌ Die Musik ist nicht pausiert!")
+        await ctx.send("❌ **Musik ist nicht pausiert!**")
 
 @bot.command(name='stop')
-async def stop(ctx):
-    voice_client = get_voice_client(ctx)
-    if voice_client:
-        music_queues[ctx.guild.id].clear()
-        voice_client.stop()
-        await ctx.send("⏹️ Musik gestoppt und Queue geleert!")
+async def stop_music(ctx):
+    """Stoppt Musik und leert Warteschlange"""
+    if ctx.voice_client:
+        guild_id = ctx.guild.id
+        if guild_id in music_queues:
+            music_queues[guild_id].clear()
+        ctx.voice_client.stop()
+        await ctx.send("⏹️ **Musik gestoppt und Warteschlange geleert**")
     else:
-        await ctx.send("❌ Es läuft gerade keine Musik!")
+        await ctx.send("❌ **Bot spielt keine Musik!**")
 
 @bot.command(name='skip', aliases=['s'])
-async def skip(ctx):
-    voice_client = get_voice_client(ctx)
-    if voice_client and voice_client.is_playing():
-        voice_client.stop()
-        await ctx.send("⏭️ Song übersprungen!")
+async def skip_music(ctx):
+    """Überspringt aktuellen Song"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("⏭️ **Song übersprungen**")
     else:
-        await ctx.send("❌ Es läuft gerade keine Musik!")
+        await ctx.send("❌ **Keine Musik läuft!**")
 
+@bot.command(name='queue', aliases=['q'])
+async def show_queue(ctx):
+    """Zeigt aktuelle Warteschlange"""
+    guild_id = ctx.guild.id
+    
+    if guild_id not in music_queues or not music_queues[guild_id]:
+        return await ctx.send("📭 **Warteschlange ist leer!**")
+    
+    embed = discord.Embed(title="🎵 Musik-Warteschlange", color=0x1DB954)
+    
+    queue_text = ""
+    for i, source in enumerate(music_queues[guild_id][:10], 1):
+        queue_text += f"`{i}.` **{source.title}**\n"
+    
+    if len(music_queues[guild_id]) > 10:
+        queue_text += f"\n*... und {len(music_queues[guild_id]) - 10} weitere Songs*"
+    
+    embed.description = queue_text
+    embed.set_footer(text=f"Gesamt: {len(music_queues[guild_id])} Songs")
+    
+    await ctx.send(embed=embed)
+
+# ========================================================================================
+# MEME COMMANDS
+# ========================================================================================
 @bot.command(name='meme', aliases=['funny', 'lol'])
-async def post_meme(ctx):
-    async with ctx.typing():
+async def send_meme(ctx):
+    """Sendet ein zufälliges Meme"""
+    reset_daily_counters()
+    
+    # Einfache Meme-URLs (können erweitert werden)
+    meme_urls = [
+        "https://i.imgur.com/placeholder1.jpg",
+        "https://i.imgur.com/placeholder2.jpg",
+        "https://i.imgur.com/placeholder3.jpg",
+        # Füge hier echte Meme-URLs hinzu
+    ]
+    
+    if not meme_urls:
+        return await ctx.send("😅 **Keine Memes verfügbar!** Bitte konfiguriere Meme-URLs.")
+    
+    meme_url = random.choice(meme_urls)
+    
+    embed = discord.Embed(
+        title="😂 Random Meme",
+        color=0xffaa00
+    )
+    embed.set_image(url=meme_url)
+    embed.set_footer(text="Bot Meme Collection")
+    
+    await ctx.send(embed=embed)
+
+@tasks.loop(minutes=CONFIG['meme_settings']['meme_interval_minutes'])
+async def auto_meme_poster():
+    """Automatischer Meme-Poster"""
+    if not CONFIG['meme_settings']['auto_meme']:
+        return
+    
+    reset_daily_counters()
+    
+    for guild in bot.guilds:
+        guild_id = guild.id
+        
+        # Prüfe tägliches Limit
+        if meme_counters.get(guild_id, 0) >= CONFIG['meme_settings']['max_memes_per_day']:
+            continue
+        
+        # Zufällige Chance
+        if random.random() > CONFIG['meme_settings']['meme_chance']:
+            continue
+        
+        # Finde erlaubte Channels
+        allowed_channels = CONFIG['meme_settings']['allowed_channels']
+        target_channels = []
+        
+        for channel in guild.text_channels:
+            if not allowed_channels or channel.id in allowed_channels:
+                target_channels.append(channel)
+        
+        if not target_channels:
+            continue
+        
+        # Sende Meme
+        channel = random.choice(target_channels)
         try:
-            meme = await MemeAPI.get_random_meme()
-            if meme:
-                embed = discord.Embed(
-                    title="🤣 Hier ist dein Meme!",
-                    description=meme['title'],
-                    color=0xff6b9d
-                )
-                embed.set_image(url=meme['url'])
-                embed.set_footer(text=f"Quelle: {meme['source']} | Angefordert von {ctx.author.display_name}")
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send("😭 Konnte kein Meme finden! Versuche es später nochmal.")
+            # Hier würde ein echtes Meme gesendet werden
+            await channel.send("😂 **Auto-Meme!** (Placeholder)")
+            meme_counters[guild_id] = meme_counters.get(guild_id, 0) + 1
+            logger.info(f"📨 Auto-Meme gesendet in {guild.name}#{channel.name}")
         except Exception as e:
-            await ctx.send(f"❌ Fehler beim Laden des Memes: {str(e)}")
+            logger.error(f"Auto-Meme Fehler: {e}")
 
-# Vereinfachte NSFW Commands für öffentliche Version
-
-@bot.command(name='nsfw', aliases=['lewd'])
-async def nsfw_command(ctx):
-    """Sendet zufälliges NSFW Content - ÖFFENTLICHE VERSION (nur Reddit & Nekos)"""
-    # Prüfe ob Channel NSFW ist
-    if not ctx.channel.is_nsfw():
-        await ctx.send("🔞 **Dieser Befehl funktioniert nur in NSFW-Channels!**\n"
-                      "Aktiviere NSFW in den Channel-Einstellungen.")
-        return
+# ========================================================================================
+# NSFW COMMANDS (IMPROVED)
+# ========================================================================================
+@bot.command(name='video', aliases=['vid', 'video_search'])
+async def video_search(ctx, *, tags=None):
+    """
+    🎬 VERBESSERTE Video-Suche mit Ultra-Strikter Filterung
     
-    await ctx.send("🔍 **Suche nach NSFW Content...**\n⚠️ *Öffentliche Version - begrenzte APIs*")
-    
-    try:
-        nsfw_content = await NSFWContentAPI.get_random_nsfw()
-        
-        if nsfw_content:
-            embed = discord.Embed(
-                title=f"🔞 {nsfw_content['title']}", 
-                color=0xff1493
-            )
-            embed.set_image(url=nsfw_content['url'])
-            embed.set_footer(text=f"📍 {nsfw_content['subreddit']} | Public Version" + 
-                           (f" | 👍 {nsfw_content['upvotes']}" if 'upvotes' in nsfw_content else ""))
-            
-            await ctx.send(embed=embed)
-            logger.info(f"🔞 NSFW Content gesendet von {ctx.author.name}: {nsfw_content['title']}")
-        else:
-            await ctx.send("❌ **Konnte kein NSFW Content finden!** Versuche es später erneut.")
-            
-    except Exception as e:
-        logger.error(f"NSFW Command Fehler: {e}")
-        await ctx.send("❌ **Fehler beim Laden von NSFW Content!**")
-
-@bot.command(name='figure', aliases=['char', 'character_search', 'fig'])
-async def figure_search_nsfw(ctx, *, character_name):
-    """Sucht nach NSFW Content von spezifischen Figuren/Charakteren - ÖFFENTLICHE VERSION"""
-    if not ctx.channel.is_nsfw():
-        await ctx.send("🔞 **Dieser Befehl funktioniert nur in NSFW-Channels!**\n"
-                      "Aktiviere NSFW in den Channel-Einstellungen.")
+    Neue Features v2.1.0:
+    - ✅ NUR echte Videos (.mp4/.webm/.mov) und GIFs (.gif)
+    - ✅ KEINE statischen Bilder mehr (.jpg/.jpeg/.png)
+    - ✅ Intelligente Tag-Kombination (tag+video, tag+animated)
+    - ✅ Anti-Duplicate System (20 URL Blacklist)
+    - ✅ Fallback-Mechanismen für bessere Treffer-Rate
+    """
+    if not await is_nsfw_channel(ctx):
+        await ctx.send("🔞 **Dieser Befehl funktioniert nur in NSFW-Channels!**")
         return
         
-    if not character_name:
-        await ctx.send("❌ **Bitte gib einen Figurennamen an!**\n"
-                      "**Beispiele:**\n"
-                      "`!figure Frieren` - Anime Charakter\n"
-                      "`!figure Zero Two` - Darling in the Franxx\n"
-                      "⚠️ *Öffentliche Version - begrenzte APIs*")
-        return
-    
-    await ctx.send(f"🔍 **Suche nach NSFW Content von: {character_name}...**\n⚠️ *Öffentliche Version - nur Reddit APIs*")
-    
-    try:
-        character_content = await AnimeCharacterAPI.search_character(character_name, nsfw=True)
-        
-        if character_content:
-            embed = discord.Embed(
-                title=f"🔞 {character_content['title']}", 
-                color=0xff1493
-            )
-            embed.set_image(url=character_content['url'])
-            
-            footer_text = f"📍 {character_content['subreddit']} | Public Version"
-            if 'upvotes' in character_content:
-                footer_text += f" | 👍 {character_content['upvotes']}"
-            if 'tags' in character_content and character_content['tags']:
-                footer_text += f" | 🏷️ {', '.join(character_content['tags'][:3])}"
-            
-            embed.set_footer(text=footer_text)
-            
-            await ctx.send(embed=embed)
-            logger.info(f"🔞 NSFW Figur gesendet von {ctx.author.name}: {character_name}")
-        else:
-            await ctx.send(f"❌ **Konnte keinen NSFW Content für '{character_name}' finden!**\n"
-                          "**Tipps für öffentliche Version:**\n"
-                          "• Versuche andere Schreibweisen\n"
-                          "• Verwende englische Namen\n"
-                          "• Probiere bekanntere Charaktere\n"
-                          "• Nutze `!figure_list` für beliebte Charaktere\n"
-                          "⚠️ *Premium APIs nicht in öffentlicher Version verfügbar*")
-            
-    except Exception as e:
-        logger.error(f"NSFW Figuren-Suche Fehler: {e}")
-        await ctx.send("❌ **Fehler beim Suchen der Figur!**")
-
-@bot.command(name='tag', aliases=['tags', 'tag_search'])
-async def tag_search(ctx, *, tags=None):
-    """Suche nach spezifischen NSFW Tags - ÖFFENTLICHE VERSION (nur SFW via Safebooru)"""
     if not tags:
         embed = discord.Embed(
-            title="🏷️ Tag-Suche Hilfe - Öffentliche Version",
-            description="⚠️ **Nur SFW Tags verfügbar in der öffentlichen Version**",
-            color=0xff69b4
+            title="🎬 Video-Suche Hilfe",
+            description="Suche nach NSFW Videos mit Tags:",
+            color=0xff1493
         )
         
-        public_tags = {
-            "**Verfügbare Tags (SFW):**": "anime, solo, group, detailed, masterpiece",
-            "**Charakter-Tags:**": "blonde_hair, blue_eyes, long_hair, short_hair",
-            "**Stil-Tags:**": "digital_art, traditional_art, sketch, painting",
-            "**Qualität:**": "high_resolution, detailed, masterpiece, wallpaper"
+        video_tags = {
+            "**Beliebte Video-Tags:**": "animated, 3d_animation, hentai, pov",
+            "**Charakter-Tags:**": "anime, manga, character_name",
+            "**Style-Tags:**": "flat_chest, big_breasts, petite",
+            "**Qualitäts-Tags:**": "high_quality, hd, 60fps"
         }
         
-        for category, tag_list in public_tags.items():
-            embed.add_field(name=category, value=tag_list, inline=False)
-            
+        for category, examples in video_tags.items():
+            embed.add_field(name=category, value=f"`{examples}`", inline=False)
+        
         embed.add_field(
-            name="**Beispiele:**",
-            value="`!tag anime solo`\n`!tag masterpiece detailed`\n`!tag blonde_hair blue_eyes`",
+            name="**🔧 Neue Features v2.1.0:**",
+            value="• Ultra-strikte Filterung (nur Videos/GIFs)\n• Intelligente Tag-Kombination\n• Anti-Duplicate System\n• Fallback-Mechanismen",
             inline=False
         )
         
-        embed.add_field(
-            name="⚠️ **Hinweis zur öffentlichen Version:**",
-            value="Diese Version verwendet nur Safebooru (SFW)\nFür erweiterte NSFW Features benötigst du API Keys",
-            inline=False
-        )
-        
-        embed.set_footer(text="Nur SFW Content in der öffentlichen Version!")
+        embed.set_footer(text="Beispiel: !video flat_chest animated")
         await ctx.send(embed=embed)
         return
     
-    await ctx.send(f"🏷️ **Tag-Suche: {tags}...**\n⚠️ *Öffentliche Version - nur SFW via Safebooru*")
+    # Prüfe Rule34 API Konfiguration
+    if not CONFIG['rule34_api']['enabled'] or not CONFIG['rule34_api']['api_key']:
+        embed = discord.Embed(
+            title="⚠️ API nicht konfiguriert",
+            description="Die Rule34 API ist nicht konfiguriert.",
+            color=0xffa500
+        )
+        embed.add_field(
+            name="Konfiguration:",
+            value="Bearbeite `config.json` und füge deine API-Daten hinzu:\n\n```json\n\"rule34_api\": {\n    \"enabled\": true,\n    \"api_key\": \"YOUR_API_KEY\",\n    \"user_id\": \"YOUR_USER_ID\"\n}\n```",
+            inline=False
+        )
+        embed.add_field(
+            name="API-Key erhalten:",
+            value="Registriere dich auf rule34.xxx und generiere einen API-Key in deinen Account-Einstellungen.",
+            inline=False
+        )
+        embed.set_footer(text="Bot funktioniert ohne API nur eingeschränkt")
+        await ctx.send(embed=embed)
+        return
+    
+    # Status-Nachricht
+    status_msg = await ctx.send("🔍 **Suche nach Videos...** 📹")
     
     try:
-        logger.info(f"🏷️ Tag-Suche gestartet von {ctx.author.name}: {tags} (Public)")
-        tag_content = await AnimeCharacterAPI.search_by_tags(tags)
-        
-        if tag_content and not tag_content.get('blocked'):
-            embed = discord.Embed(
-                title=f"🏷️ Tags: {tags} (SFW)",
-                color=0xff69b4
-            )
-            
-            embed.set_image(url=tag_content['url'])
-            
-            # Score anzeigen
-            if tag_content.get('upvotes'):
-                embed.add_field(
-                    name="👍 Score",
-                    value=f"`{tag_content['upvotes']}`",
-                    inline=True
-                )
-            
-            # Tags als Footer
-            footer_text = f"📍 {tag_content['subreddit']} | Public Version (SFW only)"
-            if 'tags' in tag_content and tag_content['tags']:
-                footer_text += f" | 🏷️ {', '.join(tag_content['tags'][:3])}"
-            
-            embed.set_footer(text=footer_text)
-            
-            await ctx.send(embed=embed)
-            logger.info(f"✅ Tag Content erfolgreich gesendet: {tags} (Public)")
-            
-        else:
-            await ctx.send(f"❌ **Konnte keine Bilder für Tags '{tags}' finden!**\n"
-                          "**Öffentliche Version Tipps:**\n"
-                          "• Verwende SFW Tags (anime, solo, detailed)\n"
-                          "• Kombiniere allgemeine Tags\n"
-                          "• Nutze `!tag` für verfügbare Tags\n"
-                          "⚠️ *NSFW Tags benötigen Premium APIs*")
-            
+        await enhanced_video_search(ctx, tags, status_msg)
     except Exception as e:
-        logger.error(f"Tag Search Fehler: {e}")
-        await ctx.send("❌ **Fehler bei der Tag-Suche!**")
+        logger.error(f"Video-Suche Fehler: {e}")
+        await status_msg.edit(content="❌ **Fehler bei der Video-Suche!** Versuche es später erneut.")
 
-@bot.command(name='help_public')
-async def help_public(ctx):
-    """Zeigt Hilfe für die öffentliche Version"""
+async def enhanced_video_search(ctx, tags, status_msg):
+    """
+    🎯 Erweiterte Video-Suche mit Ultra-Strikter Filterung
+    
+    Suchstrategie:
+    1. Primäre Suche: Nutzer-Tag (z.B. "flat_chest")
+    2. Fallback 1: Tag + "video" (z.B. "flat_chest video")  
+    3. Fallback 2: Tag + "animated" (z.B. "flat_chest animated")
+    4. Letzter Ausweg: Klare Fehlermeldung
+    """
+    global sent_video_urls
+    
+    url = 'https://api.rule34.xxx/index.php'
+    
+    # Basis-Parameter mit Authentifizierung
+    base_params = {
+        'page': 'dapi',
+        's': 'post',
+        'q': 'index',
+        'limit': 100,  # Erhöht für bessere Auswahl
+        'pid': random.randint(0, 50),  # Zufällige Seite für Variation
+        'api_key': CONFIG['rule34_api']['api_key'],
+        'user_id': CONFIG['rule34_api']['user_id']
+    }
+    
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        # 🎯 PRIMÄRE SUCHE: Nutzer-Tag
+        params = base_params.copy()
+        params['tags'] = tags
+        
+        async with session.get(url, params=params) as response:
+            if response.status != 200:
+                await status_msg.edit(content=f"❌ **API-Fehler:** Status {response.status}")
+                return
+            
+            content = await response.text()
+            root = ET.fromstring(content)
+            posts = [post.attrib for post in root.findall('.//post')]
+            
+            logger.info(f"📊 Primäre Suche '{tags}': {len(posts)} posts gefunden")
+            
+            # 🔍 ULTRA-STRIKTE VIDEO-FILTERUNG
+            real_videos = []
+            real_gifs = []
+            
+            for post in posts:
+                file_url = post.get('file_url', '')
+                if file_url:
+                    # Nur ECHTE Videoformate akzeptieren
+                    if any(ext in file_url.lower() for ext in ['.mp4', '.webm', '.mov']):
+                        real_videos.append(post)
+                    elif '.gif' in file_url.lower():
+                        real_gifs.append(post)
+            
+            # Wähle beste verfügbare Medien
+            if real_videos:
+                media_posts = real_videos
+                logger.info(f"🎬 Gefunden: {len(media_posts)} ECHTE VIDEOS für '{tags}'")
+            elif real_gifs:
+                media_posts = real_gifs
+                logger.info(f"🎭 Gefunden: {len(media_posts)} ECHTE GIFS für '{tags}'")
+            else:
+                media_posts = []
+                logger.warning(f"❌ KEINE Videos/GIFs für '{tags}' in {len(posts)} Posts!")
+            
+            logger.info(f"📊 Primär '{tags}': {len(posts)} total | Videos: {len(real_videos)} | GIFs: {len(real_gifs)} | Gewählt: {len(media_posts)}")
+            
+            # 🎬 SENDE GEFUNDENES VIDEO
+            if media_posts:
+                await send_video_result(ctx, media_posts, tags, status_msg)
+                return
+            
+            # 🔄 INTELLIGENT FALLBACK: Tag-Kombinationen
+            logger.info(f"🔄 Keine Videos für '{tags}' - versuche Tag-Kombinationen")
+            await status_msg.edit(content="🔄 **Erweitere Suche mit Video-Tags...**")
+            
+            # Versuche Tag-Kombinationen: "tag video" dann "tag animated"
+            for video_tag in ['video', 'animated']:
+                combined_tags = f"{tags} {video_tag}"
+                fallback_params = base_params.copy()
+                fallback_params['tags'] = combined_tags
+                
+                async with session.get(url, params=fallback_params) as fallback_response:
+                    if fallback_response.status == 200:
+                        fallback_content = await fallback_response.text()
+                        fallback_root = ET.fromstring(fallback_content)
+                        fallback_posts = [post.attrib for post in fallback_root.findall('.//post')]
+                        
+                        # Videos/GIFs aus Fallback filtern
+                        fallback_videos = []
+                        fallback_gifs = []
+                        
+                        for post in fallback_posts:
+                            file_url = post.get('file_url', '')
+                            if file_url and file_url not in sent_video_urls:
+                                if any(ext in file_url.lower() for ext in ['.mp4', '.webm', '.mov']):
+                                    fallback_videos.append(post)
+                                elif '.gif' in file_url.lower():
+                                    fallback_gifs.append(post)
+                        
+                        logger.info(f"📊 Fallback '{combined_tags}': {len(fallback_posts)} posts | Videos: {len(fallback_videos)} | GIFs: {len(fallback_gifs)}")
+                        
+                        # Verwende gefundene Videos/GIFs
+                        if fallback_videos:
+                            await send_video_result(ctx, fallback_videos, combined_tags, status_msg)
+                            return
+                        elif fallback_gifs:
+                            await send_video_result(ctx, fallback_gifs, combined_tags, status_msg)
+                            return
+            
+            # 🚫 WENN ALLE FALLBACKS FEHLSCHLAGEN
+            embed = discord.Embed(
+                title="❌ Keine Videos gefunden",
+                description=f"Leider keine Videos für Tag `{tags}` verfügbar.",
+                color=0xff4444
+            )
+            embed.add_field(
+                name="💡 Tipps:",
+                value="• Versuche andere Tags\n• Nutze populäre Tags wie `animated`\n• Kombiniere mehrere Tags",
+                inline=False
+            )
+            embed.set_footer(text="Versuche: !video animated")
+            await status_msg.edit(content="", embed=embed)
+            logger.warning("❌ Keine Videos mit allen Fallback-Tags gefunden!")
+
+async def send_video_result(ctx, media_posts, tags, status_msg):
+    """
+    📤 Sendet Video-Ergebnis mit Anti-Duplicate System
+    """
+    global sent_video_urls
+    
+    # Wähle zufälliges Medium
+    post = random.choice(media_posts)
+    video_url = post.get('file_url', '')
+    
+    # Anti-Duplicate: Versuche anderen Post zu finden
+    if video_url in sent_video_urls:
+        other_posts = [p for p in media_posts if p.get('file_url') not in sent_video_urls]
+        if other_posts:
+            post = random.choice(other_posts)
+            video_url = post.get('file_url', '')
+    
+    # Zur Blacklist hinzufügen (Max 20 URLs)
+    sent_video_urls.add(video_url)
+    if len(sent_video_urls) > 20:
+        sent_video_urls.pop()  # Älteste URL entfernen
+    
+    # Bestimme Medientyp für Anzeige
+    is_video = any(ext in video_url.lower() for ext in ['.mp4', '.webm', '.mov'])
+    is_gif = '.gif' in video_url.lower()
+    
+    if is_video:
+        media_icon = "🎬"
+        media_type = "Video"
+    elif is_gif:
+        media_icon = "🎭" 
+        media_type = "GIF"
+    else:
+        media_icon = "❓"
+        media_type = "Unknown"
+        logger.warning(f"🚨 UNEXPECTED FILE TYPE: {video_url}")
+    
+    # Sende Ergebnis
+    result_text = f"{media_icon} **Rule34 {media_type}** (Tags: {tags})\n{video_url}"
+    await status_msg.edit(content=result_text)
+    
+    logger.info(f"✅ Sent {media_type} ({tags}): {video_url[:50]}...")
+
+# ========================================================================================
+# UTILITY COMMANDS
+# ========================================================================================
+@bot.command(name='commands', aliases=['hilfe', 'bot_help', 'cmd'])
+async def show_commands(ctx):
+    """Zeigt alle verfügbaren Bot-Befehle"""
     embed = discord.Embed(
-        title="ℹ️ Öffentliche Bot Version - Info",
-        description="**Dies ist die öffentliche Version ohne API Keys**",
-        color=0x3498db
+        title="🤖 Bot Befehle",
+        description="Alle verfügbaren Befehle:",
+        color=0x00aaff
     )
     
+    # Musik-Befehle
+    music_cmds = {
+        "!join (!j)": "Tritt Voice-Channel bei",
+        "!play <song> (!p)": "Spielt Musik ab",
+        "!pause": "Pausiert Musik",
+        "!resume": "Setzt Musik fort", 
+        "!skip (!s)": "Überspringt Song",
+        "!stop": "Stoppt Musik",
+        "!queue (!q)": "Zeigt Warteschlange",
+        "!leave (!dc)": "Verlässt Voice-Channel"
+    }
+    
     embed.add_field(
-        name="✅ **Verfügbare Features:**",
-        value="• **Musik Bot** - Vollständig funktional\n"
-              "• **Meme Commands** - Reddit & öffentliche APIs\n"
-              "• **Basic NSFW** - Reddit basiert\n"
-              "• **SFW Anime** - Safebooru & Nekos API",
+        name="🎵 Musik-Befehle",
+        value="\n".join([f"`{cmd}` - {desc}" for cmd, desc in music_cmds.items()]),
+        inline=False
+    )
+    
+    # Entertainment-Befehle
+    fun_cmds = {
+        "!meme": "Zufälliges Meme",
+        "!video <tags>": "🔞 NSFW Video-Suche (nur NSFW-Channel)"
+    }
+    
+    embed.add_field(
+        name="🎪 Entertainment-Befehle", 
+        value="\n".join([f"`{cmd}` - {desc}" for cmd, desc in fun_cmds.items()]),
+        inline=False
+    )
+    
+    # Utility-Befehle
+    util_cmds = {
+        "!commands (!cmd)": "Zeigt diese Hilfe",
+        "!help_music": "Detaillierte Musik-Hilfe"
+    }
+    
+    embed.add_field(
+        name="🔧 Utility-Befehle",
+        value="\n".join([f"`{cmd}` - {desc}" for cmd, desc in util_cmds.items()]),
         inline=False
     )
     
     embed.add_field(
-        name="⚠️ **Eingeschränkte Features:**",
-        value="• **Erweiterte NSFW Tags** - Benötigt Rule34 API Key\n"
-              "• **Video Suche** - Premium APIs erforderlich\n"
-              "• **Advanced Character Search** - API Limits",
+        name="🆕 Neue Features v2.1.0",
+        value="• Ultra-strikte Video-Filterung\n• Anti-Duplicate System\n• Intelligente Tag-Kombinationen\n• Verbesserte Fehlerbehandlung",
         inline=False
     )
     
-    embed.add_field(
-        name="🔧 **Setup:**",
-        value="1. Erstelle `config.json` mit deinem Bot Token\n"
-              "2. Installiere Requirements: `pip install -r requirements.txt`\n"
-              "3. Starte mit: `python main.py`",
-        inline=False
-    )
+    embed.set_footer(text="Präfix: ! | Bot Version 2.1.0 (Public)")
     
-    embed.add_field(
-        name="📋 **Hauptbefehle:**",
-        value="`!play [song]` - Musik\n`!meme` - Zufälliges Meme\n`!nsfw` - Basic NSFW (NSFW Channels)\n`!help` - Vollständige Hilfe",
-        inline=False
-    )
-    
-    embed.set_footer(text="Entwickelt von MSCgameplayer mit GitHub Copilot | Öffentliche Version")
     await ctx.send(embed=embed)
 
-# Bot starten - aber nur wenn Token in config.json vorhanden ist
-if __name__ == "__main__":
-    config = load_config()
-    if config and config.get('bot_token'):
-        print("🚀 Starte Bot mit Token aus config.json...")
-        bot.run(config['bot_token'])
-    else:
-        print("❌ FEHLER: Kein Bot Token in config.json gefunden!")
-        print("📝 Erstelle eine config.json Datei mit folgendem Inhalt:")
-        print("""
-{
-    "bot_token": "DEIN_BOT_TOKEN_HIER",
-    "meme_settings": {
-        "auto_meme": false,
-        "meme_interval_minutes": 120,
-        "meme_chance": 0.15,
-        "max_memes_per_day": 3,
-        "daily_reset_hour": 6,
-        "allowed_channels": []
+@bot.command(name='help_music', aliases=['music_help'])
+async def music_help(ctx):
+    """Detaillierte Musik-Hilfe"""
+    embed = discord.Embed(
+        title="🎵 Musik-Bot Anleitung",
+        description="Vollständige Anleitung für Musik-Befehle:",
+        color=0x1DB954
+    )
+    
+    sections = {
+        "🚀 **Schnellstart:**": "1. `!join` - Bot beitreten lassen\n2. `!play <song>` - Musik abspielen\n3. `!leave` - Bot entfernen",
+        
+        "🔍 **Suchfunktionen:**": "• YouTube-URLs direkt verwenden\n• Songtitel eingeben\n• Playlist-URLs (erster Song)\n• Spotify-Links (falls unterstützt)",
+        
+        "⏯️ **Wiedergabe-Steuerung:**": "`!pause` - Pausieren\n`!resume` - Fortsetzen\n`!skip` - Nächster Song\n`!stop` - Alles stoppen",
+        
+        "📋 **Warteschlange:**": "`!queue` - Aktuelle Warteschlange\n`!play <song>` - Zur Warteschlange hinzufügen\nAutomatische Wiedergabe der Warteschlange",
+        
+        "🔧 **Hinweise:**": "• Bot benötigt Voice-Channel Berechtigung\n• Unterstützt YouTube, direkte Links\n• Warteschlange automatisch abgearbeitet"
     }
-}
-        """)
-        print("\n💡 Ersetze DEIN_BOT_TOKEN_HIER mit deinem echten Discord Bot Token!")
+    
+    for title, content in sections.items():
+        embed.add_field(name=title, value=content, inline=False)
+    
+    embed.set_footer(text="Für alle Befehle: !commands")
+    
+    await ctx.send(embed=embed)
+
+# ========================================================================================
+# BOT STARTUP
+# ========================================================================================
+def main():
+    """Hauptfunktion zum Starten des Bots"""
+    try:
+        logger.info("🚀 Starte Discord Bot...")
+        logger.info("📋 Konfiguration geladen")
+        logger.info("🎵 Audio-System bereit")
+        
+        if CONFIG['rule34_api']['enabled']:
+            logger.info("🔞 NSFW-Features aktiviert")
+        else:
+            logger.info("⚠️  NSFW-Features deaktiviert (API nicht konfiguriert)")
+            
+        if CONFIG['meme_settings']['auto_meme']:
+            logger.info("😂 Auto-Meme System aktiviert")
+        else:
+            logger.info("😴 Auto-Meme System deaktiviert")
+        
+        # Bot starten
+        bot.run(CONFIG['discord_token'])
+        
+    except discord.LoginFailure:
+        logger.error("❌ Discord Login fehlgeschlagen! Überprüfe deinen Bot-Token.")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("👋 Bot wird beendet...")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Unerwarteter Fehler: {e}")
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
