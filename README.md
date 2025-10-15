@@ -250,7 +250,7 @@ MIT License - Siehe LICENSE-Datei für Details
 ---
 
 **Bot Version:** 2.1.0 Public Release  
-**Letztes Update:** Januar 2024  
+**Letztes Update:** Oktober 2025  
 **Author:** MSCgameplayer  
 
 **🎵 Viel Spaß mit deinem Music Bot! 🤖**

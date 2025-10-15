@@ -2,7 +2,7 @@
   "_comment": "Discord Music & Entertainment Bot - Public Configuration",
   "_version": "2.1.0",
   "_description": "Konfiguration für die öffentliche Version des Bots",
-  "_last_updated": "2024-01-15",
+  "_last_updated": "2025-10-15",
   
   "discord_token": "YOUR_DISCORD_BOT_TOKEN",
   "_token_help": "Erhalte deinen Bot Token von: https://discord.com/developers/applications",
